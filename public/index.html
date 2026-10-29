@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101522">
+<title>وصال - مكالمات جماعية</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0d1220;color:#f5f7ff;font-family:Arial,sans-serif}
+header{padding:18px;text-align:center;background:#151d30;border-bottom:1px solid #29354d}
+h1{margin:0;color:#62e4ce;font-size:30px}
+header p{color:#aab7cc;margin:8px 0 0}
+main{max-width:1000px;margin:auto;padding:16px}
+.panel{background:#171f32;padding:16px;border:1px solid #29354d;border-radius:17px;margin-bottom:15px}
+input{width:100%;padding:14px;border-radius:10px;border:1px solid #3a4863;background:#0e1525;color:white;font-size:16px}
+button{padding:12px;border:0;border-radius:11px;background:#34435d;color:white;font-weight:bold;font-size:14px;cursor:pointer}
+button:disabled{opacity:.4}
+.primary{background:#087f73}
+.danger{background:#b93448}
+.controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:12px}
+.status{color:#a9b9d0;line-height:1.8;white-space:pre-wrap}
+#notice{color:#64e3ce}
+#videos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.tile{position:relative;background:#090e18;border:1px solid #34405a;border-radius:13px;overflow:hidden;min-width:0}
+.tile video{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;background:#090e18}
+.tile .name{padding:10px;font-size:14px;overflow-wrap:anywhere}
+.tile .badge{position:absolute;top:8px;right:8px;background:#101522d9;border-radius:8px;padding:6px 8px;font-size:12px}
+.tile .audio{padding:0 10px 10px;color:#aebbd0;font-size:12px}
+#count{color:#62e4ce}
+@media(min-width:650px){#videos{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:360px){#videos{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+<h1>وصال</h1>
+<p>مكالمات صوتية ومرئية جماعية</p>
+</header>
+<main>
+<section class="panel">
+<label for="name">اسمك في المكالمة</label>
+<input id="name" maxlength="30" placeholder="اكتب اسمك">
+<br><br>
+<label for="room">رمز غرفة المكالمة</label>
+<input id="room" maxlength="60" placeholder="مثال: wasim123">
+<div class="controls">
+<button id="join" class="primary">دخول المكالمة</button>
+<button id="copy">نسخ رابط الموقع</button>
+</div>
+<p id="notice" class="status">أدخل اسمك ورمز الغرفة ثم اضغط دخول المكالمة.</p>
+</section>
+
+<section class="panel">
+<h3>المشاركون (<span id="count">0</span>)</h3>
+<div id="videos"></div>
+<p class="status">تظهر هنا بطاقة مستقلة لكل مشارك ينضم إلى الغرفة.</p>
+</section>
+
+<section class="panel">
+<h3>التحكم بالمكالمة</h3>
+<div class="controls">
+<button id="mic" disabled>🎙️ كتم المايك</button>
+<button id="camera" disabled>📷 إيقاف الكاميرا</button>
+<button id="mute" disabled>🔇 كتم جميع الأصوات</button>
+<button id="share" disabled>🖥️ مشاركة الشاشة</button>
+<button id="pip" disabled>نافذة فيديو مصغرة</button>
+<button id="hangup" class="danger" disabled>إنهاء المكالمة</button>
+</div>
+</section>
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script type="module">
+import { Room, RoomEvent, Track } from 'https://esm.sh/livekit-client@2.23.0';
+
+const $ = id => document.getElementById(id);
+let room = null;
+let joined = false;
+let micOn = true;
+let cameraOn = true;
+let allMuted = false;
+let screenOn = false;
+const participants = new Map();
+
+function say(s) { $('notice').textContent = s; }
+function safeName(s) { return String(s || 'مشارك').slice(0, 30); }
+function updateCount() { $('count').textContent = participants.size; }
+
+function makeTile(id, name, isLocal = false) {
+  if (participants.has(id)) {
+    const old = participants.get(id);
+    old.name.textContent = safeName(name);
+    return old;
+  }
+
+  const tile = document.createElement('div');
+  tile.className = 'tile';
+
+  const video = document.createElement('video');
+  video.autoplay = true;
+  video.playsInline = true;
+  video.muted = isLocal;
+
+  const badge = document.createElement('div');
+  badge.className = 'badge';
+  badge.textContent = isLocal ? 'أنت' : 'متصل';
+
+  const label = document.createElement('div');
+  label.className = 'name';
+  label.textContent = safeName(name);
+
+  const status = document.createElement('div');
+  status.className = 'audio';
+  status.textContent = isLocal ? 'جارٍ تجهيز المايك' : 'جارٍ استقبال البث';
+
+  const audio = document.createElement('audio');
+  audio.autoplay = true;
+  audio.hidden = true;
+  audio.muted = isLocal || allMuted;
+
+  tile.append(video, badge, label, status, audio);
+  $('videos').appendChild(tile);
+
+  const item = { tile, video, name: label, audio: status, audioEl: audio, badge, isLocal };
+  participants.set(id, item);
+  updateCount();
+  return item;
+}
+
+function removeTile(id) {
+  const item = participants.get(id);
+  if (item) {
+    item.video.srcObject = null;
+    item.audioEl.srcObject = null;
+    item.tile.remove();
+    participants.delete(id);
+  }
+  updateCount();
+}
+
+function setControls(on) {
+  ['mic', 'camera', 'mute', 'share', 'pip', 'hangup'].forEach(id => {
+    $(id).disabled = !on;
+  });
+}
+
+function updateButtons() {
+  $('mic').textContent = micOn ? '🎙️ كتم المايك' : '🎙️ تشغيل المايك';
+  $('camera').textContent = cameraOn ? '📷 إيقاف الكاميرا' : '📷 تشغيل الكاميرا';
+  $('mute').textContent = allMuted ? '🔊 تشغيل جميع الأصوات' : '🔇 كتم جميع الأصوات';
+  $('share').textContent = screenOn ? '🖥️ إيقاف مشاركة الشاشة' : '🖥️ مشاركة الشاشة';
+}
+
+function attachVideo(track, id, name, isLocal, isScreen) {
+  const tileId = isScreen ? id + ':screen' : id;
+  const item = makeTile(
+    tileId,
+    isScreen ? safeName(name) + ' - مشاركة الشاشة' : name,
+    isLocal
+  );
+  track.attach(item.video);
+  item.video.play().catch(() => {});
+  item.audio.textContent = isScreen ? 'مشاركة الشاشة' : 'تم استقبال الفيديو';
+}
+
+function registerEvents(r) {
+  r.on(RoomEvent.ParticipantConnected, p => {
+    makeTile(p.identity, p.name || 'مشارك');
+    say((p.name || 'مشارك') + ' انضم إلى الغرفة.');
+  });
+
+  r.on(RoomEvent.ParticipantDisconnected, p => {
+    removeTile(p.identity);
+    removeTile(p.identity + ':screen');
+    say('غادر أحد المشاركين.');
+  });
+
+  r.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+    const isScreen = publication.source === Track.Source.ScreenShare;
+    if (track.kind === Track.Kind.Video) {
+      attachVideo(track, participant.identity, participant.name || 'مشارك', false, isScreen);
+    } else if (track.kind === Track.Kind.Audio) {
+      const item = makeTile(participant.identity, participant.name || 'مشارك');
+      track.attach(item.audioEl);
+      item.audioEl.muted = allMuted;
+      item.audio.textContent = 'تم استقبال صوت المشارك';
+      item.audioEl.play().catch(() => {});
+    }
+  });
+
+  r.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+    track.detach();
+    if (publication.source === Track.Source.ScreenShare) {
+      removeTile(participant.identity + ':screen');
+    } else if (track.kind === Track.Kind.Video) {
+      const item = participants.get(participant.identity);
+      if (item) item.video.srcObject = null;
+    }
+  });
+
+  r.on(RoomEvent.LocalTrackPublished, publication => {
+    if (publication.source === Track.Source.ScreenShare && publication.track) {
+      screenOn = true;
+      attachVideo(publication.track, r.localParticipant.identity, myName, true, true);
+      updateButtons();
+    }
+  });
+
+  r.on(RoomEvent.LocalTrackUnpublished, publication => {
+    if (publication.source === Track.Source.ScreenShare) {
+      removeTile(r.localParticipant.identity + ':screen');
+      screenOn = false;
+      updateButtons();
+    }
+  });
+
+  r.on(RoomEvent.Disconnected, () => {
+    if (room === r && joined) {
+      room = null;
+      joined = false;
+      participants.forEach(p => p.tile.remove());
+      participants.clear();
+      updateCount();
+      setControls(false);
+      $('join').disabled = false;
+      $('room').disabled = false;
+      say('انقطع الاتصال بالغرفة.');
+    }
+  });
+}
+
+$('join').onclick = async () => {
+  if (joined) return;
+
+  const roomName = $('room').value.trim();
+  const myName = safeName($('name').value.trim() || 'مشارك');
+  if (!roomName) return say('اكتب رمز الغرفة أولًا.');
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return say('افتح وصال عبر HTTPS أو localhost حتى يعمل المايك.');
+  }
+
+  $('join').disabled = true;
+  say('جارٍ الاتصال بخادم وصال...');
+
+  try {
+    const response = await fetch('/get-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ room: roomName, name: myName })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'تعذر تجهيز رمز المكالمة.');
+    if (!data.serverUrl || !data.token) throw new Error('بيانات الاتصال غير مكتملة.');
+
+    const r = new Room({ adaptiveStream: true, dynacast: true });
+    room = r;
+    registerEvents(r);
+
+    await r.connect(data.serverUrl, data.token);
+    await r.localParticipant.setMicrophoneEnabled(true);
+
+    try {
+      await r.localParticipant.setCameraEnabled(true);
+      cameraOn = true;
+    } catch (e) {
+      cameraOn = false;
+      say('اتصلت بالغرفة، لكن تعذّر تشغيل الكاميرا.');
+    }
+
+    joined = true;
+    micOn = true;
+    $('room').disabled = true;
+    setControls(true);
+
+    const local = makeTile(r.localParticipant.identity, myName, true);
+    const camera = r.localParticipant.getTrackPublication(Track.Source.Camera);
+    if (camera?.track) camera.track.attach(local.video);
+
+    for (const p of r.remoteParticipants.values()) {
+      makeTile(p.identity, p.name || 'مشارك');
+    }
+
+    updateButtons();
+    say('تم الاتصال بالغرفة عبر LiveKit.');
+  } catch (e) {
+    if (room) {
+      const old = room;
+      room = null;
+      await old.disconnect().catch(() => {});
+    }
+    joined = false;
+    $('join').disabled = false;
+    $('room').disabled = false;
+    say(e.message || 'تعذر الاتصال. تحقق من إعدادات LiveKit والإنترنت.');
+  }
+};
+
+$('mic').onclick = async () => {
+  if (!room || !joined) return;
+  try {
+    await room.localParticipant.setMicrophoneEnabled(!micOn);
+    micOn = !micOn;
+    updateButtons();
+  } catch (e) { say('تعذر تغيير حالة المايك.'); }
+};
+
+$('camera').onclick = async () => {
+  if (!room || !joined) return;
+  try {
+    await room.localParticipant.setCameraEnabled(!cameraOn);
+    cameraOn = !cameraOn;
+    updateButtons();
+  } catch (e) { say('تعذر تغيير حالة الكاميرا.'); }
+};
+
+$('mute').onclick = () => {
+  allMuted = !allMuted;
+  for (const p of participants.values()) {
+    if (!p.isLocal) p.audioEl.muted = allMuted;
+  }
+  updateButtons();
+};
+
+$('share').onclick = async () => {
+  if (!room || !joined) return;
+  try {
+    await room.localParticipant.setScreenShareEnabled(!screenOn);
+    screenOn = !screenOn;
+    updateButtons();
+    say(screenOn ? 'بدأت مشاركة الشاشة.' : 'تم إيقاف مشاركة الشاشة.');
+  } catch (e) {
+    say('تعذرت مشاركة الشاشة؛ قد لا يدعمها المتصفح أو الجهاز.');
+  }
+};
+
+$('pip').onclick = async () => {
+  try {
+    const item = [...participants.values()].find(p => !p.isLocal && p.video.srcObject);
+    if (!item) return say('لا يوجد فيديو مستلم لتصغيره بعد.');
+    if (document.pictureInPictureElement) await document.exitPictureInPicture();
+    else await item.video.requestPictureInPicture();
+  } catch (e) { say('الفيديو المصغّر غير مدعوم في هذا المتصفح.'); }
+};
+
+$('hangup').onclick = async () => {
+  const old = room;
+  room = null;
+  joined = false;
+  if (old) await old.disconnect().catch(() => {});
+  participants.forEach(p => p.tile.remove());
+  participants.clear();
+  updateCount();
+  micOn = true;
+  cameraOn = true;
+  screenOn = false;
+  setControls(false);
+  $('join').disabled = false;
+  $('room').disabled = false;
+  updateButtons();
+  say('انتهت المكالمة. يمكنك الانضمام مجددًا.');
+};
+
+$('copy').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(location.href);
+    say('تم نسخ رابط الموقع. أرسل الرابط ورمز الغرفة للمشارك الآخر.');
+  } catch (e) {
+    say('انسخ الرابط من شريط عنوان المتصفح.');
+  }
+};
+
+setControls(false);
+updateButtons();
+</script>
+</body>
+</html>
