@@ -81,7 +81,15 @@ public class MainActivity extends Activity {
         }
 
         if (needed.isEmpty()) {
+            Toast.makeText(this,
+                "موارد WebView: " + java.util.Arrays.toString(request.getResources()),
+                Toast.LENGTH_LONG).show();
+
             request.grant(request.getResources());
+
+            Toast.makeText(this,
+                "تم استدعاء grant لمنح الإذن",
+                Toast.LENGTH_LONG).show();
         } else {
             pendingRequest = request;
             requestPermissions(needed.toArray(new String[0]), 100);
