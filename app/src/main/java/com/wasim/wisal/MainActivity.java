@@ -35,19 +35,18 @@ public class MainActivity extends Activity {
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(PermissionRequest request) {
-                runOnUiThread(() -> handlePermission(request));
+                runOnUiThread(() -> {
+                    Toast.makeText(MainActivity.this,
+                        "وصل طلب الميكروفون: " + request.getOrigin(),
+                        Toast.LENGTH_LONG).show();
+                    handlePermission(request);
+                });
             }
         });
 
         web.setWebViewClient(new WebViewClient());
         setContentView(web);
-
-        if (siteUrl.isEmpty()) {
-            askUrl();
-        } else {
-            web.loadUrl(siteUrl);
-        }
-    }
+ }
 
     private void handlePermission(PermissionRequest request) {
         Uri origin = request.getOrigin();
