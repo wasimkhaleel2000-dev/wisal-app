@@ -46,7 +46,8 @@ public class MainActivity extends Activity {
 
         web.setWebViewClient(new WebViewClient());
         setContentView(web);
- }
+        askUrl();
+    }
 
     private void handlePermission(PermissionRequest request) {
         Uri origin = request.getOrigin();
