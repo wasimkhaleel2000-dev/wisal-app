@@ -11,6 +11,9 @@ import android.net.Uri;
 import android.webkit.*;
 import android.view.*;
 import android.widget.*;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
+import android.media.AudioFormat;
 import java.util.ArrayList;
 
 public class MainActivity extends Activity {
@@ -129,6 +132,72 @@ public class MainActivity extends Activity {
         }
     }
 
+
+    private void testNativeMic() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "إذن الميكروفون غير موجود", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        new Thread(() -> {
+            AudioRecord recorder = null;
+            try {
+                int size = AudioRecord.getMinBufferSize(
+                    44100,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT
+                );
+
+                if (size <= 0) {
+                    throw new Exception("Buffer size error: " + size);
+                }
+
+                recorder = new AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    44100,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    size * 2
+                );
+
+                if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
+                    throw new Exception("AudioRecord initialization failed");
+                }
+
+                recorder.startRecording();
+
+                short[] buffer = new short[size];
+                int result = recorder.read(buffer, 0, buffer.length);
+
+                if (result > 0) {
+                    runOnUiThread(() -> Toast.makeText(
+                        this, "نجح الاختبار الأصلي! Android قرأ " +
+                        result + " عينة صوتية",
+                        Toast.LENGTH_LONG).show());
+                } else {
+                    throw new Exception("Audio read error: " + result);
+                }
+
+            } catch (Exception e) {
+                String error = e.toString();
+                runOnUiThread(() -> Toast.makeText(
+                    this, "فشل الاختبار الأصلي: " + error,
+                    Toast.LENGTH_LONG).show());
+            } finally {
+                if (recorder != null) {
+                    try {
+                        if (recorder.getRecordingState()
+                                == AudioRecord.RECORDSTATE_RECORDING) {
+                            recorder.stop();
+                        }
+                    } catch (Exception ignored) {}
+                    recorder.release();
+                }
+            }
+        }).start();
+    }
+
     private void askUrl() {
         EditText input = new EditText(this);
         input.setSingleLine(true);
@@ -159,6 +228,10 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add("اختبار الميكروفون مباشرة").setOnMenuItemClickListener(item -> {
+            testNativeMic();
+            return true;
+        });
         menu.add("تغيير رابط وصال").setOnMenuItemClickListener(item -> {
             askUrl();
             return true;
