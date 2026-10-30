@@ -7,16 +7,17 @@ import android.os.Bundle;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.Manifest;
+import android.net.Uri;
 import android.webkit.*;
 import android.view.*;
 import android.widget.*;
 import java.util.ArrayList;
 
 public class MainActivity extends Activity {
-    WebView web;
-    SharedPreferences prefs;
-    String siteUrl;
-    PermissionRequest pendingRequest;
+    private WebView web;
+    private SharedPreferences prefs;
+    private String siteUrl = "";
+    private PermissionRequest pendingRequest;
 
     @Override
     public void onCreate(Bundle b) {
@@ -29,6 +30,7 @@ public class MainActivity extends Activity {
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setMediaPlaybackRequiresUserGesture(false);
+        web.getSettings().setJavaScriptCanOpenWindowsAutomatically(true);
 
         web.setWebChromeClient(new WebChromeClient() {
             @Override
@@ -40,19 +42,24 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient());
         setContentView(web);
 
-        if (siteUrl.isEmpty()) askUrl();
-        else web.loadUrl(siteUrl);
+        if (siteUrl.isEmpty()) {
+            askUrl();
+        } else {
+            web.loadUrl(siteUrl);
+        }
     }
 
     private void handlePermission(PermissionRequest request) {
-        if (pendingRequest != null) {
+        Uri origin = request.getOrigin();
+        Uri saved = Uri.parse(siteUrl);
+
+        if (!"https".equalsIgnoreCase(origin.getScheme())
+                || !origin.getHost().equalsIgnoreCase(saved.getHost())) {
             request.deny();
             return;
         }
 
-        if (!request.getOrigin().toString().equals(
-                android.net.Uri.parse(siteUrl).getAuthority() == null
-                ? "" : "https://" + android.net.Uri.parse(siteUrl).getAuthority())) {
+        if (pendingRequest != null) {
             request.deny();
             return;
         }
@@ -60,16 +67,16 @@ public class MainActivity extends Activity {
         ArrayList<String> needed = new ArrayList<>();
 
         for (String resource : request.getResources()) {
-            if (resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
-                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-                        != PackageManager.PERMISSION_GRANTED) {
-                    needed.add(Manifest.permission.RECORD_AUDIO);
-                }
-            } else if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) {
-                if (checkSelfPermission(Manifest.permission.CAMERA)
-                        != PackageManager.PERMISSION_GRANTED) {
-                    needed.add(Manifest.permission.CAMERA);
-                }
+            if (resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                    && checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                    != PackageManager.PERMISSION_GRANTED) {
+                needed.add(Manifest.permission.RECORD_AUDIO);
+            }
+
+            if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                    && checkSelfPermission(Manifest.permission.CAMERA)
+                    != PackageManager.PERMISSION_GRANTED) {
+                needed.add(Manifest.permission.CAMERA);
             }
         }
 
@@ -153,7 +160,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (web.canGoBack()) web.goBack();
-        else super.onBackPressed();
+        if (web.canGoBack()) {
+            web.goBack();
+        } else {
+            super.onBackPressed();
+        }
     }
 }
