@@ -1,3 +1,4 @@
+
 package com.wasim.wisal;
 
 import android.app.Activity;
@@ -9,6 +10,7 @@ import android.Manifest;
 import android.webkit.*;
 import android.view.*;
 import android.widget.*;
+import java.util.ArrayList;
 
 public class MainActivity extends Activity {
     WebView web;
@@ -27,30 +29,11 @@ public class MainActivity extends Activity {
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setMediaPlaybackRequiresUserGesture(false);
-        web.getSettings().setJavaScriptCanOpenWindowsAutomatically(true);
 
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(PermissionRequest request) {
-                runOnUiThread(() -> {
-                    boolean mic = checkSelfPermission(
-                        Manifest.permission.RECORD_AUDIO
-                    ) == PackageManager.PERMISSION_GRANTED;
-
-                    boolean cam = checkSelfPermission(
-                        Manifest.permission.CAMERA
-                    ) == PackageManager.PERMISSION_GRANTED;
-
-                    if (mic && cam) {
-                        request.grant(request.getResources());
-                    } else {
-                        pendingRequest = request;
-                        requestPermissions(new String[] {
-                            Manifest.permission.RECORD_AUDIO,
-                            Manifest.permission.CAMERA
-                        }, 100);
-                    }
-                });
+                runOnUiThread(() -> handlePermission(request));
             }
         });
 
@@ -61,27 +44,73 @@ public class MainActivity extends Activity {
         else web.loadUrl(siteUrl);
     }
 
+    private void handlePermission(PermissionRequest request) {
+        if (pendingRequest != null) {
+            request.deny();
+            return;
+        }
+
+        if (!request.getOrigin().toString().equals(
+                android.net.Uri.parse(siteUrl).getAuthority() == null
+                ? "" : "https://" + android.net.Uri.parse(siteUrl).getAuthority())) {
+            request.deny();
+            return;
+        }
+
+        ArrayList<String> needed = new ArrayList<>();
+
+        for (String resource : request.getResources()) {
+            if (resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    needed.add(Manifest.permission.RECORD_AUDIO);
+                }
+            } else if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) {
+                if (checkSelfPermission(Manifest.permission.CAMERA)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    needed.add(Manifest.permission.CAMERA);
+                }
+            }
+        }
+
+        if (needed.isEmpty()) {
+            request.grant(request.getResources());
+        } else {
+            pendingRequest = request;
+            requestPermissions(needed.toArray(new String[0]), 100);
+        }
+    }
+
     @Override
     public void onRequestPermissionsResult(
-        int requestCode, String[] permissions, int[] results
-    ) {
+            int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
 
         if (requestCode == 100 && pendingRequest != null) {
-            boolean mic = checkSelfPermission(
-                Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED;
-
-            boolean cam = checkSelfPermission(
-                Manifest.permission.CAMERA
-            ) == PackageManager.PERMISSION_GRANTED;
-
-            if (mic && cam) {
-                pendingRequest.grant(pendingRequest.getResources());
-            } else {
-                pendingRequest.deny();
-            }
+            PermissionRequest request = pendingRequest;
             pendingRequest = null;
+
+            ArrayList<String> allowed = new ArrayList<>();
+
+            for (String resource : request.getResources()) {
+                if (resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                        && checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                        == PackageManager.PERMISSION_GRANTED) {
+                    allowed.add(resource);
+                }
+
+                if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                        && checkSelfPermission(Manifest.permission.CAMERA)
+                        == PackageManager.PERMISSION_GRANTED) {
+                    allowed.add(resource);
+                }
+            }
+
+            if (!allowed.isEmpty()) {
+                request.grant(allowed.toArray(new String[0]));
+            } else {
+                request.deny();
+            }
         }
     }
 
@@ -102,8 +131,7 @@ public class MainActivity extends Activity {
                 if (!u.startsWith("https://")) {
                     new AlertDialog.Builder(this)
                         .setMessage("استخدم رابط HTTPS صحيحًا")
-                        .setPositiveButton("حسنًا",
-                            (a, c) -> askUrl())
+                        .setPositiveButton("حسنًا", (a, c) -> askUrl())
                         .show();
                     return;
                 }
